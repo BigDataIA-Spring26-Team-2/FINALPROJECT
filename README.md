@@ -151,10 +151,6 @@ The system uses four components built on LangGraph, with a single entry point.
 
 *Five stages: User input → Scrape (6 sources with exact fields) → Process (geocode, LLM classify, spatial filter) → Store (daily scorecards in Snowflake) → Output (comparison report with recommendation).*
 
-**User Flow — Step by Step:**
-
-![User Flow](./images/user_flow.png)
-
 ### 4.4 Data Processing & Transformation
 
 **Batch processing (Airflow DAGs):**
@@ -346,20 +342,31 @@ Vicinity combines 10 public data sources into a spatial intelligence layer that 
 
 ## Appendix
 
-### A. Snowflake Schema
+### A. Sample Snowflake Schema
 
 ```sql
 student_profiles (user_id, anchor_address, anchor_lat, anchor_lon, budget, bedrooms, max_commute_min, preferences, created_at)
+
 routine_nodes (node_id, user_id, name, address, lat, lon, visit_days, visit_hour, node_type)
+
 route_edges (edge_id, user_id, origin_node_id, dest_node_id, route_coords, duration_min, distance_m, mode, transit_lines)
+
 candidate_watches (watch_id, user_id, listing_url, listing_lat, listing_lon, listing_price, watch_start, watch_end, active)
+
 crimes (incident_number, offense_description, occurred_on_date, hour, street, district, lat, lon, shooting, severity_llm, source, ingested_at)
+
 complaints (case_id, open_dt, type, category_llm, street_address, neighborhood, lat, lon, ingested_at)
+
 listings (listing_hash, url, price, bedrooms, description, lat, lon, features_llm, posted_at, first_seen, last_seen, times_seen)
+
 news_classified (headline_hash, headline, source_url, sentiment_llm, topic_llm, preference_match, published_at, ingested_at)
+
 reddit_classified (post_id, title, body, score, sentiment_llm, topics_llm, preference_match, created_at, ingested_at)
+
 meetup_events (event_id, event_name, venue_name, lat, lon, event_date, group_name, ingested_at)
+
 location_scorecards (user_id, listing_lat, listing_lon, score_date, crime_count_7d, violent_count_7d, crime_trend, complaint_count, complaint_types, citizen_incidents_24h, listing_active, price_change)
+
 lifestyle_scorecards (user_id, listing_lat, listing_lon, score_date, preference_term, venue_count, event_count, sentiment_score, preference_match_score)
 ```
 
@@ -380,12 +387,31 @@ Input: "ASSAULT - AGGRAVATED"
 
 ## Proof of Concept
 
-The repository includes a working Streamlit app (`poc.py`) and a suite of data validation scripts that confirm every source endpoint returns usable data.
+The repository includes a working Streamlit app and data validation scripts that confirm every source endpoint returns usable data.
 
-`poc.py` is the core demo. It takes a listing address and destinations as plain text, geocodes everything live via Nominatim (or Google Maps if a key is provided), computes walking routes via OSRM (or transit routes via Google Maps Directions API), fetches crime data from Boston PD, 311 complaints, Citizen App real-time incidents, and Overpass amenities — then scores each route corridor for safety and renders the full route graph on a Folium map. A second map shows all raw data points (crimes, complaints, Citizen incidents) as toggleable layers. No hardcoded results.
+### Running the POC
+```bash
+pip install streamlit folium streamlit-folium requests pandas
+streamlit run poc.py
+```
 
-To run: `pip install streamlit folium streamlit-folium requests pandas` then `streamlit run poc.py`. Set `GOOGLE_MAPS_KEY` as an environment variable for transit routing. Without it, the app falls back to walking routes and Nominatim geocoding.
+Optionally set `GOOGLE_MAPS_KEY` as an environment variable for transit routing and Google Places data. Without it, the app falls back to Nominatim geocoding and OSRM walking routes.
+```bash
+# With Google Maps (transit routing enabled)
+set GOOGLE_MAPS_KEY=your_key_here   # Windows
+export GOOGLE_MAPS_KEY=your_key_here  # Mac/Linux
+streamlit run poc.py
+```
 
-`inspect_data.py` prints the exact fields, record counts, date ranges, and coordinate coverage for every source — this is how we confirmed Boston PD has 257K records with 91% lat/lon coverage, 311 has 267K records, and Craigslist individual pages return descriptions with embedded coordinates.
+The app takes a listing address and destinations as plain text in the sidebar, geocodes everything live, computes routes, fetches crime data from Boston PD (257K records, paginated), 311 complaints, Citizen App real-time incidents, and Overpass amenities, then scores each route corridor for safety and renders the full route graph on a Folium map. A second map shows all raw incidents as toggleable layers. Each data source is shown in a separate tab with exact fields and how they feed into the scoring. Zero hardcoded results.
 
-`test_student_housing.py`, `test_listing_sources.py`, and `test_lifestyle_search.py` validate every endpoint we claim works. These tests confirmed Citizen App returns real-time incidents with coordinates and scanner transcriptions, Meetup returns 40-140 groups per interest, Google News handles any lifestyle query, and that Zillow, Apartments.com, HotPads, SpotCrime, and Universal Hub are all inaccessible (403/404).
+### Running the data validation scripts
+```bash
+pip install httpx requests
+python inspect_data.py
+python test_student_housing.py
+python test_listing_sources.py
+python test_lifestyle_search.py
+```
+
+`inspect_data.py` prints exact fields, record counts, date ranges, and coordinate coverage for every source. `test_student_housing.py` validates all primary endpoints. `test_listing_sources.py` tests lifestyle APIs (Yelp, Google Places, Walk Score, expanded Overpass). `test_lifestyle_search.py` tests the general web search pipeline (Google News, Meetup, Eventbrite, Reddit lifestyle queries, dynamic Overpass queries). These scripts confirmed what works and what returns 403 — the data source table in this README is based entirely on their output.
