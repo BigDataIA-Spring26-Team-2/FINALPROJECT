@@ -1,4 +1,4 @@
-# Vicinity: Real-Time Spatial Intelligence Platform for Urban Housing Decisions
+# Vicinity: Boston Intelligent Housing
 
 | Resource | Link |
 |----------|------|
