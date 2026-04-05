@@ -112,6 +112,8 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 |-------|-----------|---------------|
 | Cloud | GCP (VM + Cloud Storage) | application images pushed to registries and pulled to servers with ease and at demand |
 | Warehouse | Snowflake | Temporal queries on scorecards, GEOGRAPHY type for spatial |
+| Raw Storage | AWS S3 | Raw API responses and scraped data stored before processing — enables replay if classification logic changes |
+| Container Registry | GCP Artifact Registry | Docker images built by GitHub Actions, pulled by GCP VM |
 | Cache | Redis | Geocode results, amenity queries, commute computations |
 | Orchestration | Airflow (CeleryExecutor) | DAG scheduling — hourly/daily/weekly per candidate listing |
 | Agents | LangGraph | ReAct loop for Chat Agent, parallel graph for Search, sequential for Report |
@@ -122,6 +124,8 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 | Deployment | Docker Compose | Split containers: API, Airflow, Dashboard |
 
 ### 4.3 Architecture
+
+![Cloud Architecture](./images/arch.png)
 
 ### Agent Architecture
 
