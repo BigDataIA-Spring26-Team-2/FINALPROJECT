@@ -49,7 +49,7 @@ Deliverables:
 ### 2.1 Scope
 
 **In scope:**
-- Apartment listing scraping (Craigslist)
+- Apartment listing ingestion via HomeHarvest (Realtor.com MLS data) with Craigslist as fallback
 - Safety scoring using crime incidents (Boston PD, Citizen App) filtered along actual commute routes
 - Livability scoring using 311 complaint history near each listing
 - Lifestyle matching using Overpass amenities, Meetup events, Google Places ratings, Reddit/News sentiment
@@ -96,7 +96,8 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 | Boston PD Crime | 257,954 | Daily (1-2 day lag) | OFFENSE_DESCRIPTION, OCCURRED_ON_DATE, HOUR, STREET, Lat, Long, SHOOTING | CKAN datastore_search |
 | 311 Complaints | 267,187 | Daily | type, open_dt, case_title, neighborhood, latitude, longitude | CKAN datastore_search |
 | Citizen App | ~15-50 per query | Real-time (minutes) | title, latitude, longitude, severity, level, timestamp, address | Trending API (bbox) |
-| Craigslist | ~300 per search | Scraped Mon/Thu | url, price, bedrooms, description, lat, lon, address, posted_date | HTML scrape + parse |
+| HomeHarvest (Realtor.com) | ~900 per city query | On demand (MLS refresh) | list_price, beds, full_baths, sqft, street, city, zip_code, latitude, longitude, days_on_mls, mls_id, agent_name, primary_photo, text | `scrape_property()` Python API |
+| Craigslist (fallback) | ~300 per search | Scraped Mon/Thu | url, price, bedrooms, description, lat, lon, address, posted_date | HTML scrape + parse |
 | Google Maps | On demand | Real-time | duration_min, route coordinates, transit lines, distance | Directions + Distance Matrix + Geocoding + Places |
 | Overpass (OSM) | ~160 per query | Monthly (cached) | name, type, lat, lon, opening_hours, cuisine, sport | Overpass QL |
 | Reddit r/boston /similar threads | ~30 per query | Scraped daily | title, body, score, num_comments, created_date | JSON search endpoint |
@@ -105,6 +106,8 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 | Eventbrite | ~10 per query | Weekly | event_name, venue, date | Public search pages |
 
 **Expected volume:** Under 1GB per month of accumulated data across all sources. Computation scales with users x candidate listings x data dimensions.
+
+**HomeHarvest data quality note:** HomeHarvest pulls structured MLS data from Realtor.com — 66 columns per listing including geocoordinates, price, beds/baths, sqft, days on market, agent contact, and photos. This eliminates the need for LLM-based feature extraction on listing descriptions (required with Craigslist) since fields arrive pre-structured. Craigslist is retained as a fallback for listings not on MLS (e.g., owner-listed rooms, short-term sublets).
 
 ### 4.2 Technology Stack
 
@@ -135,11 +138,11 @@ The system uses four components built on LangGraph, with a single entry point.
 
 **Organizer (write tools).** A set of functions with write access to Snowflake. Creates profiles, geocodes addresses via Google Maps, stores routine destinations, bookmarks candidate listings, and triggers Airflow DAGs. The Chat Agent invokes these — the Organizer never talks to the user directly.
 
-**Search Supervisor (LangGraph parallel graph).** Triggered once per listing search. Scrapes Craigslist, filters by commute using Google Maps Distance Matrix, then fans out four scoring tasks in parallel across all surviving listings: safety (crime + Citizen along route corridors), livability (311 complaints near listing), amenities (Overpass within 800m), and lifestyle match (Meetup + Google Places + Overpass tags matched to user preferences). Fans in to a ranking step where the LLM explains why each listing scored the way it did.
+**Search Supervisor (LangGraph parallel graph).** Triggered once per listing search. Queries HomeHarvest for Realtor.com MLS listings matching the user's budget and bedroom requirements, filters by commute using Google Maps Distance Matrix, then fans out four scoring tasks in parallel across all surviving listings: safety (crime + Citizen along route corridors), livability (311 complaints near listing), amenities (Overpass within 800m), and lifestyle match (Meetup + Google Places + Overpass tags matched to user preferences). Fans in to a ranking step where the LLM explains why each listing scored the way it did.
 
 **Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs — weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence for each claim.
 
-**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Four DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), scorecard (aggregates classified records into one row per listing per day), and listings (re-checks Craigslist for price changes and stale detection).
+**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Four DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), scorecard (aggregates classified records into one row per listing per day), and listings (re-checks active listings for price changes and stale detection — HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
 
 **MCP Server.** A FastAPI endpoint with SSE transport that exposes the Chat Agent as an invocable tool. Any MCP-compatible LLM client (Claude Desktop, a custom chatbot, or any application speaking the MCP protocol) connects with an API key, and the user's profile, bookmarked listings, and preferences are loaded from Snowflake automatically. The client sends a natural language query, the MCP server routes it to the Chat Agent, and the response streams back. Additionally, a small set of direct API tools are exposed for programmatic access: `search_listings`, `check_location`, `get_comparison_report`, and `add_destination` — these bypass the Chat Agent and invoke the inner components (Search Supervisor, Report Generator, Organizer) directly when an LLM client already knows what it wants.
 
@@ -161,7 +164,7 @@ The system uses four components built on LangGraph, with a single entry point.
 - Crime + 311: daily pull via CKAN `datastore_search`, paginated (1000 records/page), filtered by bounding box client-side, LLM classifies severity
 - Citizen: hourly poll with tight bounding box per bookmarked listing, `limit=50`
 - Reddit + News + Meetup + Eventbrite: weekly scrape, LLM classifies sentiment and preference match
-- Craigslist: Mon/Thu re-scrape, check if listings still active, detect price changes
+- Listings: HomeHarvest query Mon/Thu per watched location (`past_days=3`), diff against stored listings for price changes and stale detection. Craigslist fallback scrape for non-MLS listings on the same schedule.
 
 **Spatial processing:**
 - Google Maps returns route coordinates (list of lat/lon points following actual streets) for each listing-to-destination pair
@@ -186,10 +189,12 @@ The system uses four components built on LangGraph, with a single entry point.
 | News sentiment | Headline + snippet | `{sentiment: str, topic: str, preference_match: bool}` |
 | Reddit classification | Post title + body | `{sentiment: str, topics: list, preference_match: bool}` |
 | 311 categorization | type + case_title | `{category: "pest" / "noise" / "infrastructure" / "other"}` |
-| Listing feature extraction | Craigslist description | `{condition: str, amenities: list, pet_policy: str, red_flags: list}` |
+| Listing feature extraction | Craigslist description (fallback listings only) | `{condition: str, amenities: list, pet_policy: str, red_flags: list}` |
 | Preference expansion | User free text | `{overpass_tags: list, google_types: list, reddit_queries: list}` |
 
 All classification outputs validated with Pydantic schemas. Failures logged, not stored.
+
+**Note:** HomeHarvest listings arrive with structured fields (beds, baths, sqft, pet_policy, parking, description text) and do not require LLM feature extraction. The listing classification task above applies only to Craigslist fallback listings where the description is unstructured free text.
 
 **Lifestyle Preference Pipeline.** The user states preferences in plain English — "I like Korean food," "I need a gym," "I'm into live music." The LLM expands each preference into source-specific search terms: `cuisine=korean` for Overpass, `korean` as a keyword for Google Places, `"korean food allston"` for Reddit, `"Korean restaurants Boston"` for Google News, and relevant Meetup/Eventbrite categories. These expanded queries run against each source per candidate listing during the Search Supervisor's parallel scoring phase (for initial results) and again inside the weekly lifestyle DAG (for ongoing accumulation during the watch period). Results are aggregated into a preference match score per listing: how many matching venues within 800m, how many relevant events nearby, and whether community sentiment about that preference in the listing's neighborhood is positive or negative. The same pipeline handles any preference — "quiet for studying" inverts the signal (noise complaints become negative), "I have a dog" searches for dog parks and vet clinics, "I play tennis" queries `sport=tennis` in Overpass. The LLM is the universal translator between human language and API queries.
 
@@ -253,7 +258,7 @@ All data fetched live. Zero hardcoded results.
 |------|-------|----|----|-----|
 | Airflow DAGs (crime, 311, Citizen) | Anirudh | ✓ | | |
 | Airflow DAGs (Reddit, News, Meetup, Eventbrite) | Minal | ✓ | | |
-| Craigslist scraper + listing parser | Janhavi | ✓ | | |
+| HomeHarvest listing pipeline + Craigslist fallback | Janhavi | ✓ | | |
 | Snowflake schema + scorecard tables | Anirudh | ✓ | | |
 | LLM classification pipeline (DeepSeek) | Minal | ✓ | | |
 | Google Maps integration | Janhavi | ✓ | | |
@@ -274,7 +279,7 @@ All data fetched live. Zero hardcoded results.
 |--------|------|------------------|
 | Anirudh Acharya | Data + Infra Lead | Airflow DAGs, Snowflake schema, MCP server, GCP deployment, Chat Agent |
 | Minal Naranje | LLM + Search Lead | Classification pipeline, Search Supervisor, social/lifestyle DAGs, Streamlit |
-| Janhavi Patil | Integration Lead | Craigslist scraper, Google Maps routing, Organizer Agent, Report Generator |
+| Janhavi Patil | Integration Lead | Listing pipeline (HomeHarvest + Craigslist fallback), Google Maps routing, Organizer Agent, Report Generator |
 
 ---
 
@@ -283,7 +288,8 @@ All data fetched live. Zero hardcoded results.
 | Risk | Mitigation |
 |------|-----------|
 | Citizen App API breaks (undocumented) | Fallback to Boston PD + Google News RSS |
-| Craigslist blocks scraping | Rate limit to 2x/week. Cache listings once scraped. fallback to alternative sources that were tested (Zumper, rent.com) |
+| HomeHarvest / Realtor.com rate limiting | 3-5s delay between calls. Cache listings once fetched. ~10-20 req/min safe threshold. |
+| Craigslist blocks scraping (fallback source) | Rate limit to 2x/week. Cache listings once scraped. Craigslist is fallback only — primary pipeline unaffected. |
 | Google Maps free tier exceeded | Cache commute computations. Same route reused for weeks. |
 | LLM classification errors | Pydantic enforcement. Failed validations excluded. Golden set >85%. |
 
@@ -291,7 +297,9 @@ All data fetched live. Zero hardcoded results.
 
 ## 8. Expected Outcomes
 
-**Multi-source data pipeline.** Airflow DAGs ingest from 10 validated Boston data sources into Snowflake on independent schedules (hourly for Citizen, daily for crime/311/news, weekly for Reddit/Meetup/Eventbrite, twice weekly for Craigslist).
+**Multi-source data pipeline.** Airflow DAGs ingest from 10 validated Boston data sources into Snowflake on independent schedules (hourly for Citizen, daily for crime/311/news, weekly for Reddit/Meetup/Eventbrite, twice weekly for listings).
+
+**Structured listing ingestion.** HomeHarvest returns 66-column MLS data per listing (price, beds, baths, sqft, geocoordinates, agent info, photos, days on market) — eliminating LLM-based feature extraction for the primary listing source.
 
 **LLM classification with schema enforcement.** Every ingested record passes through DeepSeek with Pydantic-validated output — crime gets a severity tag, news gets sentiment + preference match, 311 gets a complaint category.
 
@@ -333,6 +341,7 @@ Vicinity combines 10 public data sources into a spatial intelligence layer that 
 - Boston PD Crime Incidents: [data.boston.gov](https://data.boston.gov/dataset/crime-incident-reports-august-2015-to-date)
 - Boston 311 Service Requests: [data.boston.gov](https://data.boston.gov/dataset/311-service-requests)
 - Citizen App API: `citizen.com/api/incident/trending`
+- HomeHarvest (Realtor.com scraper): [github.com/ZacharyHampton/HomeHarvest](https://github.com/ZacharyHampton/HomeHarvest)
 - Google Maps Platform: [developers.google.com/maps](https://developers.google.com/maps)
 - Overpass API: [overpass-api.de](https://overpass-api.de)
 - Reddit API: [reddit.com/dev/api](https://www.reddit.com/dev/api)
@@ -340,7 +349,7 @@ Vicinity combines 10 public data sources into a spatial intelligence layer that 
 - Meetup: [meetup.com](https://www.meetup.com)
 - Eventbrite: [eventbrite.com](https://www.eventbrite.com)
 - LangGraph: [langchain-ai.github.io/langgraph](https://langchain-ai.github.io/langgraph)
-- Craigslist Boston: [boston.craigslist.org/search/apa](https://boston.craigslist.org/search/apa)
+- Craigslist Boston (fallback): [boston.craigslist.org/search/apa](https://boston.craigslist.org/search/apa)
 
 ---
 
@@ -361,7 +370,7 @@ crimes (incident_number, offense_description, occurred_on_date, hour, street, di
 
 complaints (case_id, open_dt, type, category_llm, street_address, neighborhood, lat, lon, ingested_at)
 
-listings (listing_hash, url, price, bedrooms, description, lat, lon, features_llm, posted_at, first_seen, last_seen, times_seen)
+listings (listing_id, property_url, source, list_price, beds, full_baths, sqft, street, city, zip_code, lat, lon, mls_id, days_on_mls, agent_name, primary_photo, description, features_llm, first_seen, last_seen, times_seen)
 
 news_classified (headline_hash, headline, source_url, sentiment_llm, topic_llm, preference_match, published_at, ingested_at)
 
@@ -389,13 +398,45 @@ Rules:
 Input: "ASSAULT - AGGRAVATED"
 ```
 
+### C. HomeHarvest Sample Response
+
+A single `scrape_property(location="Boston, MA", listing_type="for_rent", past_days=7)` call returns a DataFrame with 66 columns. Key fields per listing:
+
+```
+property_url:    https://www.realtor.com/rentals/details/88-Wareham-St-Unit-307_Boston_MA_02118_M90459-27380
+property_id:     9045927380
+listing_id:      2993270277
+mls:             HELN
+mls_id:          09f084a1-5c6a-434b-9f13-b14c593315ee
+status:          FOR_RENT
+list_price:      3200
+beds:            2
+full_baths:      1
+sqft:            850
+street:          88 Wareham St
+unit:            Unit 307
+city:            Boston
+state:           MA
+zip_code:        02118
+latitude:        42.3412
+longitude:       -71.0698
+days_on_mls:     12
+list_date:       2026-03-24 00:00:00
+agent_name:      John Smith
+agent_email:     john@example.com
+primary_photo:   https://ap.rdcpix.com/...
+text:            "Sunny 2BR in South End..."
+```
+
+Tested April 5, 2026: 900 listings returned for Boston, 2,504 unique listings across Boston/Cambridge/Somerville/Brookline after deduplication.
+
 ## Proof of Concept
 
 The repository includes a working Streamlit app and data validation scripts that confirm every source endpoint returns usable data.
 
 ### Running the POC
 ```bash
-pip install streamlit folium streamlit-folium requests pandas
+pip install streamlit folium streamlit-folium requests pandas homeharvest
 streamlit run poc.py
 ```
 
@@ -411,11 +452,11 @@ The app takes a listing address and destinations as plain text in the sidebar, g
 
 ### Running the data validation scripts
 ```bash
-pip install httpx requests
+pip install httpx requests homeharvest
 python inspect_data.py
 python test_student_housing.py
 python test_listing_sources.py
 python test_lifestyle_search.py
 ```
 
-`inspect_data.py` prints exact fields, record counts, date ranges, and coordinate coverage for every source. `test_student_housing.py` validates all primary endpoints. `test_listing_sources.py` tests lifestyle APIs (Yelp, Google Places, Walk Score, expanded Overpass). `test_lifestyle_search.py` tests the general web search pipeline (Google News, Meetup, Eventbrite, Reddit lifestyle queries, dynamic Overpass queries). These scripts confirmed what works and what returns 403 — the data source table in this README is based entirely on their output.
+`inspect_data.py` prints exact fields, record counts, date ranges, and coordinate coverage for every source. `test_student_housing.py` validates all primary endpoints. `test_listing_sources.py` tests listing APIs (HomeHarvest for Realtor.com MLS data, Craigslist fallback, expanded Overpass). `test_lifestyle_search.py` tests the general web search pipeline (Google News, Meetup, Eventbrite, Reddit lifestyle queries, dynamic Overpass queries). These scripts confirmed what works and what returns 403 — the data source table in this README is based entirely on their output.
