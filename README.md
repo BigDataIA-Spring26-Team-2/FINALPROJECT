@@ -1,4 +1,4 @@
-# Vicinity: Boston Intelligent Housing
+# Vicinity: Safe Intelligent Housing at Boston
 
 | Resource | Link |
 |----------|------|
