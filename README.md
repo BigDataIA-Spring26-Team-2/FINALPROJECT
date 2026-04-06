@@ -23,7 +23,7 @@
 
 ### 1.1 Background
 
-Every year, roughly 50,000 people move to Boston for work or school. They pick apartments from Craigslist or Zillow based on price, photos, and a Walk Score — with no visibility into whether the commute route has had violent incidents at the hours they travel, whether the building has a history of 311 rodent complaints, or whether the neighborhood actually has the lifestyle amenities they care about.
+Every year, roughly 50,000 people move to Boston for work or school. They pick apartments from Craigslist or Zillow based on price, photos, and a Walk Score with no visibility into whether the commute route has had violent incidents at the hours they travel, whether the building has a history of 311 rodent complaints, or whether the neighborhood actually has the lifestyle amenities they care about.
 
 Crime data, complaint records, transit schedules, community sentiment, and real-time incident feeds all exist as public data. But they are fragmented across 10+ sources with different schemas, update frequencies, and coordinate systems. No platform combines them into a spatial assessment tied to a specific person's routine and preferences.
 
@@ -33,7 +33,7 @@ Build a platform that takes a user's work address, budget, routine, and lifestyl
 
 ### 1.3 The Watch Period
 
-The central idea behind is that you should not sign a lease based on a single snapshot. The user bookmarks 3-5 candidate listings and sets a watch period — 1 week, 2 weeks, a month. During that window, Airflow DAGs run daily in the background: fetching new crime incidents along each listing's commute corridors, new 311 complaints near each listing, new Citizen App real-time events, Reddit and news mentions of each neighborhood, and Meetup/Eventbrite activity matching the user's lifestyle preferences. Every day, a scorecard row is written to Snowflake for each listing. At the end of the watch period, the user asks for the comparison report. The Report Generator reads the full history of daily scorecards, compares all listings across every dimension with trends over time, and produces a justified recommendation. The user decides based on 14 days of accumulated evidence, not today's data.
+The central idea behind is that you should not sign a lease based on a single snapshot. The user bookmarks 3-5 candidate listings and sets a watch period 1 week, 2 weeks, a month. During that window, Airflow DAGs run daily in the background: fetching new crime incidents along each listing's commute corridors, new 311 complaints near each listing, new Citizen App real-time events, Reddit and news mentions of each neighborhood, and Meetup/Eventbrite activity matching the user's lifestyle preferences. Every day, a scorecard row is written to Snowflake for each listing. At the end of the watch period, the user asks for the comparison report. The Report Generator reads the full history of daily scorecards, compares all listings across every dimension with trends over time, and produces a justified recommendation. The user decides based on 14 days of accumulated evidence, not today's data.
 
 Deliverables:
 - Multi-source data ingestion pipeline (10 sources, Airflow-orchestrated)
@@ -65,7 +65,7 @@ Deliverables:
 
 ### 2.2 Stakeholders / End Users
 
-Anyone searching for housing in Boston — students, new hires, relocating professionals, healthcare workers with irregular schedules. The system is schedule-aware: a nurse working night shifts gets safety scoring filtered to 2 AM, not 2 PM.
+Anyone searching for housing in Boston students, new hires, relocating professionals, healthcare workers with irregular schedules. The system is schedule-aware: a nurse working night shifts gets safety scoring filtered to 2 AM, not 2 PM.
 
 ---
 
@@ -107,7 +107,7 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 
 **Expected volume:** Under 1GB per month of accumulated data across all sources. Computation scales with users x candidate listings x data dimensions.
 
-**HomeHarvest data quality note:** HomeHarvest pulls structured MLS data from Realtor.com — 66 columns per listing including geocoordinates, price, beds/baths, sqft, days on market, agent contact, and photos. This eliminates the need for LLM-based feature extraction on listing descriptions (required with Craigslist) since fields arrive pre-structured. Craigslist is retained as a fallback for listings not on MLS (e.g., owner-listed rooms, short-term sublets).
+**HomeHarvest data quality note:** HomeHarvest pulls structured MLS data from Realtor.com 66 columns per listing including geocoordinates, price, beds/baths, sqft, days on market, agent contact, and photos. This eliminates the need for LLM-based feature extraction on listing descriptions (required with Craigslist) since fields arrive pre-structured. Craigslist is retained as a fallback for listings not on MLS (e.g., owner-listed rooms, short-term sublets).
 
 ### 4.2 Technology Stack
 
@@ -115,10 +115,10 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 |-------|-----------|---------------|
 | Cloud | GCP (VM + Cloud Storage) | application images pushed to registries and pulled to servers with ease and at demand |
 | Warehouse | Snowflake | Temporal queries on scorecards, GEOGRAPHY type for spatial |
-| Raw Storage | AWS S3 | Raw API responses and scraped data stored before processing — enables replay if classification logic changes |
+| Raw Storage | AWS S3 | Raw API responses and scraped data stored before processing enables replay if classification logic changes |
 | Container Registry | GCP Artifact Registry | Docker images built by GitHub Actions, pulled by GCP VM |
 | Cache | Redis | Geocode results, amenity queries, commute computations |
-| Orchestration | Airflow (CeleryExecutor) | DAG scheduling — hourly/daily/weekly per candidate listing |
+| Orchestration | Airflow (CeleryExecutor) | DAG scheduling hourly/daily/weekly per candidate listing |
 | Agents | LangGraph | ReAct loop for Chat Agent, parallel graph for Search, sequential for Report |
 | LLM | DeepSeek (primary) + GPT-4o (fallback) via LiteLLM | DeepSeek outperforms on template tasks at lower cost |
 | API | FastAPI | REST endpoints + MCP SSE server |
@@ -136,15 +136,15 @@ The system uses four components built on LangGraph, with a single entry point.
 
 **Chat Agent (ReAct loop).** The only component the user interacts with. It receives every message, classifies intent, and routes accordingly. If the user asks a question ("is this area safe?"), the Chat Agent picks a SQL template, queries Snowflake, and synthesizes a response. If the user wants to change something ("bookmark this listing"), it calls the Organizer. If the user wants to find apartments, it triggers the Search Supervisor. If the user wants the final comparison, it triggers the Report Generator. All responses flow back through the Chat Agent to the user.
 
-**Organizer (write tools).** A set of functions with write access to Snowflake. Creates profiles, geocodes addresses via Google Maps, stores routine destinations, bookmarks candidate listings, and triggers Airflow DAGs. The Chat Agent invokes these — the Organizer never talks to the user directly.
+**Organizer (write tools).** A set of functions with write access to Snowflake. Creates profiles, geocodes addresses via Google Maps, stores routine destinations, bookmarks candidate listings, and triggers Airflow DAGs. The Chat Agent invokes these the Organizer never talks to the user directly.
 
 **Search Supervisor (LangGraph parallel graph).** Triggered once per listing search. Queries HomeHarvest for Realtor.com MLS listings matching the user's budget and bedroom requirements, filters by commute using Google Maps Distance Matrix, then fans out four scoring tasks in parallel across all surviving listings: safety (crime + Citizen along route corridors), livability (311 complaints near listing), amenities (Overpass within 800m), and lifestyle match (Meetup + Google Places + Overpass tags matched to user preferences). Fans in to a ranking step where the LLM explains why each listing scored the way it did.
 
-**Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs — weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence for each claim.
+**Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence for each claim.
 
-**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Four DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), scorecard (aggregates classified records into one row per listing per day), and listings (re-checks active listings for price changes and stale detection — HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
+**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Four DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), scorecard (aggregates classified records into one row per listing per day), and listings (re-checks active listings for price changes and stale detection HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
 
-**MCP Server.** A FastAPI endpoint with SSE transport that exposes the Chat Agent as an invocable tool. Any MCP-compatible LLM client (Claude Desktop, a custom chatbot, or any application speaking the MCP protocol) connects with an API key, and the user's profile, bookmarked listings, and preferences are loaded from Snowflake automatically. The client sends a natural language query, the MCP server routes it to the Chat Agent, and the response streams back. Additionally, a small set of direct API tools are exposed for programmatic access: `search_listings`, `check_location`, `get_comparison_report`, and `add_destination` — these bypass the Chat Agent and invoke the inner components (Search Supervisor, Report Generator, Organizer) directly when an LLM client already knows what it wants.
+**MCP Server.** A FastAPI endpoint with SSE transport that exposes the Chat Agent as an invocable tool. Any MCP-compatible LLM client (Claude Desktop, a custom chatbot, or any application speaking the MCP protocol) connects with an API key, and the user's profile, bookmarked listings, and preferences are loaded from Snowflake automatically. The client sends a natural language query, the MCP server routes it to the Chat Agent, and the response streams back. Additionally, a small set of direct API tools are exposed for programmatic access: `search_listings`, `check_location`, `get_comparison_report`, and `add_destination` these bypass the Chat Agent and invoke the inner components (Search Supervisor, Report Generator, Organizer) directly when an LLM client already knows what it wants.
 
 **System Architecture — Agent Interactions:**
 
@@ -196,7 +196,7 @@ All classification outputs validated with Pydantic schemas. Failures logged, not
 
 **Note:** HomeHarvest listings arrive with structured fields (beds, baths, sqft, pet_policy, parking, description text) and do not require LLM feature extraction. The listing classification task above applies only to Craigslist fallback listings where the description is unstructured free text.
 
-**Lifestyle Preference Pipeline.** The user states preferences in plain English — "I like Korean food," "I need a gym," "I'm into live music." The LLM expands each preference into source-specific search terms: `cuisine=korean` for Overpass, `korean` as a keyword for Google Places, `"korean food allston"` for Reddit, `"Korean restaurants Boston"` for Google News, and relevant Meetup/Eventbrite categories. These expanded queries run against each source per candidate listing during the Search Supervisor's parallel scoring phase (for initial results) and again inside the weekly lifestyle DAG (for ongoing accumulation during the watch period). Results are aggregated into a preference match score per listing: how many matching venues within 800m, how many relevant events nearby, and whether community sentiment about that preference in the listing's neighborhood is positive or negative. The same pipeline handles any preference — "quiet for studying" inverts the signal (noise complaints become negative), "I have a dog" searches for dog parks and vet clinics, "I play tennis" queries `sport=tennis` in Overpass. The LLM is the universal translator between human language and API queries.
+**Lifestyle Preference Pipeline.** The user states preferences in plain English "I like Korean food," "I need a gym," "I'm into live music." The LLM expands each preference into source-specific search terms: `cuisine=korean` for Overpass, `korean` as a keyword for Google Places, `"korean food allston"` for Reddit, `"Korean restaurants Boston"` for Google News, and relevant Meetup/Eventbrite categories. These expanded queries run against each source per candidate listing during the Search Supervisor's parallel scoring phase (for initial results) and again inside the weekly lifestyle DAG (for ongoing accumulation during the watch period). Results are aggregated into a preference match score per listing: how many matching venues within 800m, how many relevant events nearby, and whether community sentiment about that preference in the listing's neighborhood is positive or negative. The same pipeline handles any preference — "quiet for studying" inverts the signal (noise complaints become negative), "I have a dog" searches for dog parks and vet clinics, "I play tennis" queries `sport=tennis` in Overpass. The LLM is the universal translator between human language and API queries.
 
 **Agentic workflows (LangGraph):**
 
@@ -214,7 +214,7 @@ All classification outputs validated with Pydantic schemas. Failures logged, not
 
 **Output validation:**
 - All LLM outputs validated against Pydantic schemas
-- SQL templates are pre-defined — the LLM selects templates, never writes raw SQL
+- SQL templates are pre-defined the LLM selects templates, never writes raw SQL
 
 **HITL checkpoints:**
 1. After onboarding: "Here are your destinations. Correct?" : user approves
@@ -299,15 +299,15 @@ All data fetched live. Zero hardcoded results.
 
 **Multi-source data pipeline.** Airflow DAGs ingest from 10 validated Boston data sources into Snowflake on independent schedules (hourly for Citizen, daily for crime/311/news, weekly for Reddit/Meetup/Eventbrite, twice weekly for listings).
 
-**Structured listing ingestion.** HomeHarvest returns 66-column MLS data per listing (price, beds, baths, sqft, geocoordinates, agent info, photos, days on market) — eliminating LLM-based feature extraction for the primary listing source.
+**Structured listing ingestion.** HomeHarvest returns 66 column MLS data per listing (price, beds, baths, sqft, geocoordinates, agent info, photos, days on market) — eliminating LLM-based feature extraction for the primary listing source.
 
-**LLM classification with schema enforcement.** Every ingested record passes through DeepSeek with Pydantic-validated output — crime gets a severity tag, news gets sentiment + preference match, 311 gets a complaint category.
+**LLM classification with schema enforcement.** Every ingested record passes through DeepSeek with Pydantic-validated output crime gets a severity tag, news gets sentiment + preference match, 311 gets a complaint category.
 
 **Daily scorecard computation.** One Snowflake row per listing per day aggregating crime count along route corridors, complaint density near the listing, and lifestyle match score against user preferences.
 
 **LangGraph agentic workflow.** Chat Agent (ReAct loop for all user queries), Search Supervisor (parallel scoring across candidate listings), Report Generator (compile evidence → analyze tradeoffs → cited recommendation).
 
-**MCP server with persistent context.** FastAPI + SSE endpoint — user authenticates once, any MCP-compatible LLM client gets their profile, routes, and preferences pre-loaded without re-explaining.
+**MCP server with persistent context.** FastAPI + SSE endpoint user authenticates once, any MCP-compatible LLM client gets their profile, routes, and preferences pre-loaded without re-explaining.
 
 **HITL at decision points.** User approves geocoded locations before search, approves the watch set before DAGs trigger, and reviews the comparison report before picking a listing.
 
@@ -332,7 +332,7 @@ Optimization: DeepSeek primary (10x cheaper than GPT-4o), Pydantic schema enforc
 
 ## 10. Conclusion
 
-Vicinity combines 10 public data sources into a spatial intelligence layer that answers "where should I live" with evidence accumulated over time, personalized to the user's routine and lifestyle. The technical differentiator is route-level safety scoring — filtering crime data along the exact path the user would walk or ride, at the hours they travel. No existing housing platform does this.
+Vicinity combines 10 public data sources into a spatial intelligence layer that answers "where should I live" with evidence accumulated over time, personalized to the user's routine and lifestyle. The technical differentiator is route-level safety scoring filtering crime data along the exact path the user would walk or ride, at the hours they travel. No existing housing platform does this.
 
 ---
 
