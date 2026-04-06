@@ -11,7 +11,7 @@
 
 | Member | Contribution |
 |--------|-------------|
-| Anirudh Acharya | 33.3% |
+| Anirudh Raj | 33.3% |
 | Minal Naranje | 33.3% |
 | Janhavi Patil | 33.3% |
 
