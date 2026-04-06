@@ -277,7 +277,7 @@ All data fetched live. Zero hardcoded results.
 
 | Member | Role | Primary Ownership |
 |--------|------|------------------|
-| Anirudh Acharya | Data + Infra Lead | Airflow DAGs, Snowflake schema, MCP server, GCP deployment, Chat Agent |
+| Anirudh Raj | Data + Infra Lead | Airflow DAGs, Snowflake schema, MCP server, GCP deployment, Chat Agent |
 | Minal Naranje | LLM + Search Lead | Classification pipeline, Search Supervisor, social/lifestyle DAGs, Streamlit |
 | Janhavi Patil | Integration Lead | Listing pipeline (HomeHarvest + Craigslist fallback), Google Maps routing, Organizer Agent, Report Generator |
 
