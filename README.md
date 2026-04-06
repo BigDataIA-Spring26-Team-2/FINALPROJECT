@@ -11,7 +11,7 @@
 
 | Member | Contribution |
 |--------|-------------|
-| Anirudh Acharya | 33.3% |
+| Anirudh Raj | 33.3% |
 | Minal Naranje | 33.3% |
 | Janhavi Patil | 33.3% |
 
@@ -33,11 +33,12 @@ Build a platform that takes a user's work address, budget, routine, and lifestyl
 
 ### 1.3 The Watch Period
 
-The central idea behind is that you should not sign a lease based on a single snapshot. The user bookmarks 3-5 candidate listings and sets a watch period — 1 week, 2 weeks, a month. During that window, Airflow DAGs run daily in the background: fetching new crime incidents along each listing's commute corridors, new 311 complaints near each listing, new Citizen App real-time events, Reddit and news mentions of each neighborhood, and Meetup/Eventbrite activity matching the user's lifestyle preferences. Every day, a scorecard row is written to Snowflake for each listing. At the end of the watch period, the user asks for the comparison report. The Report Generator reads the full history of daily scorecards, compares all listings across every dimension with trends over time, and produces a justified recommendation. The user decides based on 14 days of accumulated evidence, not today's data.
+The central idea behind Vicinity is that you should not sign a lease based on a single snapshot. The user bookmarks 3-5 candidate listings and sets a watch period — 1 week, 2 weeks, a month. During that window, Airflow DAGs run daily in the background: fetching new crime incidents along each listing's commute corridors, new 311 complaints near each listing, new Citizen App real-time events, Reddit and news mentions of each neighborhood, and Meetup/Eventbrite activity matching the user's lifestyle preferences. Every day, a scorecard row is written to Snowflake for each listing, and the raw narrative text (crime descriptions, Reddit posts, news headlines) is embedded into Pinecone for semantic retrieval. At the end of the watch period, the user asks for the comparison report. The Report Generator reads the full history of daily scorecards from Snowflake and retrieves cited evidence from Pinecone, compares all listings across every dimension with trends over time, and produces a justified recommendation. The user decides based on 14 days of accumulated evidence, not today's data.
 
 Deliverables:
 - Multi-source data ingestion pipeline (10 sources, Airflow-orchestrated)
 - LLM-powered classification of crime severity, news sentiment, and lifestyle preference matching
+- Dual-retrieval architecture: SQL templates for structured scorecard queries (Snowflake) + HyDE-enhanced semantic search for narrative evidence (Pinecone)
 - LangGraph agentic workflow with parallel listing search, daily monitoring, and report generation
 - MCP server for cross-client access with persistent user profiles
 - Streamlit dashboard with interactive map and comparison reports
@@ -55,7 +56,8 @@ Deliverables:
 - Lifestyle matching using Overpass amenities, Meetup events, Google Places ratings, Reddit/News sentiment
 - Commute computation via Google Maps Directions API (transit routing)
 - Daily scorecard accumulation over a user-defined watch period
-- LLM-generated comparison report with tradeoff analysis
+- Vector embedding of ingested narratives into Pinecone for semantic evidence retrieval
+- LLM-generated comparison report with tradeoff analysis citing specific evidence
 - MCP server wrapping all tools
 
 **Out of scope:**
@@ -77,6 +79,7 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 - **No route-level safety:** Existing platforms show neighborhood-level crime stats. A listing 500m from a dangerous corridor looks "safe" in aggregate. Our system scores the actual route the user walks or rides, at the hours they travel.
 - **No temporal monitoring:** A listing might look fine today. Two weeks of daily data accumulation reveals a rising crime trend or new rodent complaints that a snapshot misses.
 - **No lifestyle personalization:** "I like Korean food" is not a Zillow filter. The system needs to understand arbitrary lifestyle preferences and find matching venues, events, and community sentiment near each listing.
+- **No narrative evidence:** Existing platforms reduce everything to numbers. A safety score of 72 tells you nothing about *what happened*. Users need to read the actual incident descriptions, Reddit discussions, and news coverage to make confident decisions — but no platform makes this searchable in natural language.
 
 ### 3.2 Opportunities
 
@@ -84,6 +87,7 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 - LLM classification turns unstructured data (news headlines, Reddit posts, crime descriptions) into structured preference-matched signals
 - Spatial filtering along route geometry (not just radius) provides safety assessment no existing platform offers
 - Daily scorecard accumulation over a watch period gives temporal intelligence for confident decision-making
+- Vector embedding of narrative data (crime descriptions, Reddit posts, news headlines) enables semantic retrieval — the user asks "has anything violent happened near this listing at night?" and gets cited evidence, not just a count
 
 ---
 
@@ -113,14 +117,16 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 
 | Layer | Technology | Justification |
 |-------|-----------|---------------|
-| Cloud | GCP (VM + Cloud Storage) | application images pushed to registries and pulled to servers with ease and at demand |
+| Cloud | GCP (VM + Cloud Storage) | Application images pushed to registries and pulled to servers with ease and on demand |
 | Warehouse | Snowflake | Temporal queries on scorecards, GEOGRAPHY type for spatial |
+| Vector Store | Pinecone | Semantic retrieval over unstructured narratives (crime descriptions, Reddit posts, news headlines, event details); complements SQL for structured scorecard queries |
 | Raw Storage | AWS S3 | Raw API responses and scraped data stored before processing — enables replay if classification logic changes |
 | Container Registry | GCP Artifact Registry | Docker images built by GitHub Actions, pulled by GCP VM |
 | Cache | Redis | Geocode results, amenity queries, commute computations |
 | Orchestration | Airflow (CeleryExecutor) | DAG scheduling — hourly/daily/weekly per candidate listing |
 | Agents | LangGraph | ReAct loop for Chat Agent, parallel graph for Search, sequential for Report |
 | LLM | DeepSeek (primary) + GPT-4o (fallback) via LiteLLM | DeepSeek outperforms on template tasks at lower cost |
+| Embeddings | OpenAI text-embedding-3-small | Low cost, 1536 dimensions, used for Pinecone vector writes and HyDE query embedding |
 | API | FastAPI | REST endpoints + MCP SSE server |
 | Frontend | Streamlit + Folium | Dashboard with interactive Leaflet maps |
 | CI/CD | GitHub Actions | Automated testing + Docker build |
@@ -132,17 +138,17 @@ Anyone searching for housing in Boston — students, new hires, relocating profe
 
 ### Agent Architecture
 
-The system uses four components built on LangGraph, with a single entry point.
+The system uses four components built on LangGraph, with a single entry point. The Chat Agent uses dual retrieval — SQL templates against Snowflake for structured data (scorecard numbers, crime counts, trends) and HyDE-enhanced semantic search against Pinecone for narrative evidence (incident descriptions, Reddit discussions, news coverage). This means the system can answer both "how many violent crimes happened near listing A this week?" (SQL) and "what are people saying about safety in Allston at night?" (Pinecone).
 
-**Chat Agent (ReAct loop).** The only component the user interacts with. It receives every message, classifies intent, and routes accordingly. If the user asks a question ("is this area safe?"), the Chat Agent picks a SQL template, queries Snowflake, and synthesizes a response. If the user wants to change something ("bookmark this listing"), it calls the Organizer. If the user wants to find apartments, it triggers the Search Supervisor. If the user wants the final comparison, it triggers the Report Generator. All responses flow back through the Chat Agent to the user.
+**Chat Agent (ReAct loop).** The only component the user interacts with. It receives every message, classifies intent, and routes accordingly. For structured queries ("how many crimes near this listing?", "what's the commute time?"), the Chat Agent selects a SQL template, queries Snowflake, and synthesizes a response. For open-ended queries ("what's the vibe of this neighborhood?", "is it sketchy walking home late near this place?", "show me things to do around my listings"), the Chat Agent generates a hypothetical answer (HyDE), embeds it, and retrieves semantically similar narratives from Pinecone — Reddit posts, news headlines, crime descriptions, event listings — then synthesizes a grounded response citing specific evidence. If the user wants to change something ("bookmark this listing"), it calls the Organizer. If the user wants to find apartments, it triggers the Search Supervisor. If the user wants the final comparison, it triggers the Report Generator. All responses flow back through the Chat Agent to the user.
 
 **Organizer (write tools).** A set of functions with write access to Snowflake. Creates profiles, geocodes addresses via Google Maps, stores routine destinations, bookmarks candidate listings, and triggers Airflow DAGs. The Chat Agent invokes these — the Organizer never talks to the user directly.
 
 **Search Supervisor (LangGraph parallel graph).** Triggered once per listing search. Queries HomeHarvest for Realtor.com MLS listings matching the user's budget and bedroom requirements, filters by commute using Google Maps Distance Matrix, then fans out four scoring tasks in parallel across all surviving listings: safety (crime + Citizen along route corridors), livability (311 complaints near listing), amenities (Overpass within 800m), and lifestyle match (Meetup + Google Places + Overpass tags matched to user preferences). Fans in to a ranking step where the LLM explains why each listing scored the way it did.
 
-**Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs — weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence for each claim.
+**Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs — weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence retrieved from Pinecone — actual Reddit posts about the neighborhood, specific crime incident descriptions along the route, relevant news coverage — not just aggregate numbers.
 
-**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Four DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), scorecard (aggregates classified records into one row per listing per day), and listings (re-checks active listings for price changes and stale detection — HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
+**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Five DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), embed (writes the raw narrative text with metadata to Pinecone — crime descriptions, Reddit posts, news headlines, 311 case titles, event details), scorecard (aggregates classified records into one row per listing per day in Snowflake), and listings (re-checks active listings for price changes and stale detection — HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
 
 **MCP Server.** A FastAPI endpoint with SSE transport that exposes the Chat Agent as an invocable tool. Any MCP-compatible LLM client (Claude Desktop, a custom chatbot, or any application speaking the MCP protocol) connects with an API key, and the user's profile, bookmarked listings, and preferences are loaded from Snowflake automatically. The client sends a natural language query, the MCP server routes it to the Chat Agent, and the response streams back. Additionally, a small set of direct API tools are exposed for programmatic access: `search_listings`, `check_location`, `get_comparison_report`, and `add_destination` — these bypass the Chat Agent and invoke the inner components (Search Supervisor, Report Generator, Organizer) directly when an LLM client already knows what it wants.
 
@@ -150,13 +156,13 @@ The system uses four components built on LangGraph, with a single entry point.
 
 ![Agent Architecture](./images/agentdiagram.png)
 
-*Four components: Chat Agent (user-facing, READ), Organizer Agent (WRITE), Search Supervisor (parallel scoring), Report Generator (compile → analyze → recommend). Airflow DAGs accumulate data on schedule. Everything reads from / writes to Snowflake.*
+*Four components: Chat Agent (user-facing, READ via SQL + Pinecone), Organizer Agent (WRITE), Search Supervisor (parallel scoring), Report Generator (compile → analyze → recommend with cited evidence). Airflow DAGs accumulate data on schedule. Structured data flows to Snowflake; narrative embeddings flow to Pinecone.*
 
 **Data Flow — Field-Level Transformations:**
 
 ![Data Flow](./images/dataflow.png)
 
-*Five stages: User input → Scrape (6 sources with exact fields) → Process (geocode, LLM classify, spatial filter) → Store (daily scorecards in Snowflake) → Output (comparison report with recommendation).*
+*Six stages: User input → Geocode & Route → Scrape (7 sources with exact fields) → Classify & Filter (LLM classification + spatial filtering) → Store (daily scorecards to Snowflake, narrative embeddings to Pinecone) → Output (comparison report with cited evidence and recommendation).*
 
 ### 4.4 Data Processing & Transformation
 
@@ -165,6 +171,13 @@ The system uses four components built on LangGraph, with a single entry point.
 - Citizen: hourly poll with tight bounding box per bookmarked listing, `limit=50`
 - Reddit + News + Meetup + Eventbrite: weekly scrape, LLM classifies sentiment and preference match
 - Listings: HomeHarvest query Mon/Thu per watched location (`past_days=3`), diff against stored listings for price changes and stale detection. Craigslist fallback scrape for non-MLS listings on the same schedule.
+
+**Vector embedding (Pinecone):**
+- After LLM classification, the embed DAG writes narrative text to Pinecone with metadata: `source` (crime/311/reddit/news/citizen/meetup/eventbrite), `lat`, `lon`, `timestamp`, `user_id`, `listing_lat`, `listing_lon`, `severity_llm` or `sentiment_llm` as applicable
+- Embedding model: OpenAI `text-embedding-3-small` (1536 dimensions)
+- Each record is one vector. Text is the raw narrative (e.g., crime offense description + street + hour, or Reddit post title + body)
+- Pinecone namespace per user for isolation. Metadata filters narrow retrieval to relevant listings and time ranges
+- HyDE at query time: the Chat Agent and Report Generator generate a hypothetical answer to the user's question, embed that answer, and retrieve the nearest real narratives from Pinecone. This bridges the vocabulary gap between conversational queries ("is it sketchy at night?") and stored records ("ASSAULT - AGGRAVATED, 11 PM, Tremont St")
 
 **Spatial processing:**
 - Google Maps returns route coordinates (list of lat/lon points following actual streets) for each listing-to-destination pair
@@ -177,7 +190,7 @@ The system uses four components built on LangGraph, with a single entry point.
 - Count 311 complaints by type (pest, noise, infrastructure)
 - Aggregate lifestyle signals: venue count, event count, sentiment scores, preference match
 
-**Storage schema:** Append-only. Every record has `ingested_at` timestamp. Scorecards are one row per listing per day. Historical data is never overwritten.
+**Storage schema:** Append-only. Every record has `ingested_at` timestamp. Scorecards are one row per listing per day in Snowflake. Narrative embeddings are append-only in Pinecone with the same `ingested_at` metadata. Historical data is never overwritten in either store.
 
 ### 4.5 LLM Integration Strategy
 
@@ -200,14 +213,14 @@ All classification outputs validated with Pydantic schemas. Failures logged, not
 
 **Agentic workflows (LangGraph):**
 
-- **Chat Agent:** ReAct loop. Receives user message, decides which SQL template or API to call, executes, observes, synthesizes response.
+- **Chat Agent:** ReAct loop. Receives user message, classifies intent into three paths: (1) structured data → SQL template against Snowflake, (2) open-ended / exploratory → HyDE embedding + Pinecone semantic search, (3) action → delegate to Organizer, Search Supervisor, or Report Generator. Synthesizes response from whichever path was taken.
 - **Search Supervisor:** Parallel graph. search_node → commute_filter_node → [safety | livability | amenity | lifestyle] in parallel → rank_node with LLM synthesis.
-- **Report Generator:** Sequential graph. compile_evidence (SQL) → analyze_tradeoffs (LLM with analyst prompt) → generate_report (LLM with writer prompt, cites evidence).
+- **Report Generator:** Sequential graph. compile_evidence (SQL from Snowflake + semantic retrieval from Pinecone) → analyze_tradeoffs (LLM with analyst prompt) → generate_report (LLM with writer prompt, cites specific evidence from Pinecone narratives).
 
 ### 4.6 Guardrails & Human-in-the-Loop
 
 **Input validation:**
-- The primary onboarding involves the chatbot asking the user about his interests, his requirements, his routine and frequently visited places before creating the respective zones to track the crime activity for him.
+- The primary onboarding involves the chatbot asking users about their interests, requirements, routine, and frequently visited places before creating the respective zones to track the crime activity for them.
 - Budget and bedrooms validated as numbers within reasonable ranges
 - Addresses geocoded and confirmed with user before proceeding
 - Preference expansions shown to user for approval before search
@@ -215,6 +228,7 @@ All classification outputs validated with Pydantic schemas. Failures logged, not
 **Output validation:**
 - All LLM outputs validated against Pydantic schemas
 - SQL templates are pre-defined — the LLM selects templates, never writes raw SQL
+- Pinecone retrieval results are filtered by metadata (user, listing, time range) before reaching the LLM — no cross-user data leakage
 
 **HITL checkpoints:**
 1. After onboarding: "Here are your destinations. Correct?" : user approves
@@ -228,11 +242,13 @@ All classification outputs validated with Pydantic schemas. Failures logged, not
 | LLM classification accuracy | Golden set: 100 crimes, 50 headlines, 50 Reddit posts | >85% |
 | Spatial query correctness | Unit tests with known coordinates | 100% pass |
 | Scorecard consistency | Same input → same scorecard | 100% pass |
-| API | End-to-end: user query → response | end to end integration |
+| Pinecone retrieval relevance | 50 test queries, manual relevance judgment on top-5 results | >80% relevant |
+| HyDE vs direct embedding | A/B on retrieval quality for 30 conversational queries | HyDE wins on >70% |
+| API | End-to-end: user query → response | End-to-end integration |
 | DAG reliability | Task success rate over 14-day run | >95% |
 | Report quality | Rubric: cites evidence, identifies tradeoffs, clear recommendation | Manual review |
 
-Makefile to simulate autonomous deployment to gcp that can be integrated into github action workflows later on.
+Makefile to simulate autonomous deployment to GCP that can be integrated into GitHub Actions workflows later on.
 
 ### 4.8 Proof of Concept
 
@@ -260,11 +276,12 @@ All data fetched live. Zero hardcoded results.
 | Airflow DAGs (Reddit, News, Meetup, Eventbrite) | Minal | ✓ | | |
 | HomeHarvest listing pipeline + Craigslist fallback | Janhavi | ✓ | | |
 | Snowflake schema + scorecard tables | Anirudh | ✓ | | |
+| Pinecone index setup + embed DAG | Anirudh | ✓ | | |
 | LLM classification pipeline (DeepSeek) | Minal | ✓ | | |
 | Google Maps integration | Janhavi | ✓ | | |
-| Chat Agent + SQL templates | Anirudh | | ✓ | |
+| Chat Agent + SQL templates + HyDE retrieval | Anirudh | | ✓ | |
 | Search Supervisor (parallel graph) | Minal | | ✓ | |
-| Organizer Agent + Report Generator | Janhavi | | ✓ | |
+| Organizer Agent + Report Generator (with Pinecone evidence) | Janhavi | | ✓ | |
 | MCP server + FastAPI | Anirudh | | ✓ | |
 | Streamlit dashboard + map | Minal | | | ✓ |
 | Comparison report UI | Janhavi | | | ✓ |
@@ -277,7 +294,7 @@ All data fetched live. Zero hardcoded results.
 
 | Member | Role | Primary Ownership |
 |--------|------|------------------|
-| Anirudh Acharya | Data + Infra Lead | Airflow DAGs, Snowflake schema, MCP server, GCP deployment, Chat Agent |
+| Anirudh Raj | Data + Infra Lead | Airflow DAGs, Snowflake schema, Pinecone setup, MCP server, GCP deployment, Chat Agent |
 | Minal Naranje | LLM + Search Lead | Classification pipeline, Search Supervisor, social/lifestyle DAGs, Streamlit |
 | Janhavi Patil | Integration Lead | Listing pipeline (HomeHarvest + Craigslist fallback), Google Maps routing, Organizer Agent, Report Generator |
 
@@ -292,20 +309,26 @@ All data fetched live. Zero hardcoded results.
 | Craigslist blocks scraping (fallback source) | Rate limit to 2x/week. Cache listings once scraped. Craigslist is fallback only — primary pipeline unaffected. |
 | Google Maps free tier exceeded | Cache commute computations. Same route reused for weeks. |
 | LLM classification errors | Pydantic enforcement. Failed validations excluded. Golden set >85%. |
+| Pinecone free tier limits (namespaces, vector count) | One namespace per user. TTL-based cleanup of vectors older than 90 days. Estimated ~5K vectors/user/month — well within free tier. |
+| Embedding API cost spike | Batch embed calls. Deduplicate before embedding (same crime record across users shares one vector with metadata). |
 
 ---
 
 ## 8. Expected Outcomes
 
-**Multi-source data pipeline.** Airflow DAGs ingest from 10 validated Boston data sources into Snowflake on independent schedules (hourly for Citizen, daily for crime/311/news, weekly for Reddit/Meetup/Eventbrite, twice weekly for listings).
+**Multi-source data pipeline.** Airflow DAGs ingest from 10 validated Boston data sources into Snowflake and Pinecone on independent schedules (hourly for Citizen, daily for crime/311/news, weekly for Reddit/Meetup/Eventbrite, twice weekly for listings).
 
 **Structured listing ingestion.** HomeHarvest returns 66-column MLS data per listing (price, beds, baths, sqft, geocoordinates, agent info, photos, days on market) — eliminating LLM-based feature extraction for the primary listing source.
 
 **LLM classification with schema enforcement.** Every ingested record passes through DeepSeek with Pydantic-validated output — crime gets a severity tag, news gets sentiment + preference match, 311 gets a complaint category.
 
+**Dual-retrieval architecture.** Structured scorecard data lives in Snowflake (SQL templates for counts, trends, aggregates). Raw narrative text lives in Pinecone as vector embeddings (semantic search for evidence, context, and open-ended exploration). The Chat Agent and Report Generator query both stores depending on the nature of the question.
+
+**HyDE-enhanced semantic search.** When the user asks an open-ended question, the system generates a hypothetical answer, embeds it, and retrieves the nearest real narratives from Pinecone. This bridges the vocabulary gap between conversational queries and stored records — "is it dangerous at night?" retrieves "ASSAULT - AGGRAVATED, 11 PM, Tremont St" even though no words overlap.
+
 **Daily scorecard computation.** One Snowflake row per listing per day aggregating crime count along route corridors, complaint density near the listing, and lifestyle match score against user preferences.
 
-**LangGraph agentic workflow.** Chat Agent (ReAct loop for all user queries), Search Supervisor (parallel scoring across candidate listings), Report Generator (compile evidence → analyze tradeoffs → cited recommendation).
+**LangGraph agentic workflow.** Chat Agent (ReAct loop with dual retrieval for all user queries), Search Supervisor (parallel scoring across candidate listings), Report Generator (compile evidence from both stores → analyze tradeoffs → cited recommendation).
 
 **MCP server with persistent context.** FastAPI + SSE endpoint — user authenticates once, any MCP-compatible LLM client gets their profile, routes, and preferences pre-loaded without re-explaining.
 
@@ -322,17 +345,19 @@ All data fetched live. Zero hardcoded results.
 | Crime classification | ~50 | ~200 | $0.01 |
 | News classification | ~40 | ~300 | $0.01 |
 | Reddit classification | ~10 (weekly) | ~500 | <$0.01 |
+| Vector embedding (all sources) | ~100 | ~300 | $0.002 (OpenAI embed) |
+| HyDE query generation | ~5 | ~200 | $0.001 |
 | Report generation | On demand | ~3000 | $0.02 |
 
 **Estimated total: <$1/user for a full 14-day monitoring cycle.**
 
-Optimization: DeepSeek primary (10x cheaper than GPT-4o), Pydantic schema enforcement, cache duplicate classifications, batch where possible.
+Optimization: DeepSeek primary (10x cheaper than GPT-4o), Pydantic schema enforcement, cache duplicate classifications, batch embeddings, deduplicate vectors across users where possible.
 
 ---
 
 ## 10. Conclusion
 
-Vicinity combines 10 public data sources into a spatial intelligence layer that answers "where should I live" with evidence accumulated over time, personalized to the user's routine and lifestyle. The technical differentiator is route-level safety scoring — filtering crime data along the exact path the user would walk or ride, at the hours they travel. No existing housing platform does this.
+Vicinity combines 10 public data sources into a spatial intelligence layer that answers "where should I live" with evidence accumulated over time, personalized to the user's routine and lifestyle. The technical differentiators are route-level safety scoring — filtering crime data along the exact path the user would walk or ride, at the hours they travel — and dual-retrieval architecture that lets users ask natural language questions and get answers grounded in real incident reports, community discussions, and news coverage, not just aggregate scores. No existing housing platform does either.
 
 ---
 
@@ -350,6 +375,8 @@ Vicinity combines 10 public data sources into a spatial intelligence layer that 
 - Eventbrite: [eventbrite.com](https://www.eventbrite.com)
 - LangGraph: [langchain-ai.github.io/langgraph](https://langchain-ai.github.io/langgraph)
 - Craigslist Boston (fallback): [boston.craigslist.org/search/apa](https://boston.craigslist.org/search/apa)
+- Pinecone: [pinecone.io](https://www.pinecone.io)
+- HyDE (Hypothetical Document Embeddings): [arxiv.org/abs/2212.10496](https://arxiv.org/abs/2212.10496)
 
 ---
 
@@ -381,6 +408,27 @@ meetup_events (event_id, event_name, venue_name, lat, lon, event_date, group_nam
 location_scorecards (user_id, listing_lat, listing_lon, score_date, crime_count_7d, violent_count_7d, crime_trend, complaint_count, complaint_types, citizen_incidents_24h, listing_active, price_change)
 
 lifestyle_scorecards (user_id, listing_lat, listing_lon, score_date, preference_term, venue_count, event_count, sentiment_score, preference_match_score)
+```
+
+**Note on Pinecone:** Pinecone is a managed vector database and does not use SQL schemas. Each vector is stored with the following metadata structure for filtering at query time:
+
+```
+vector_id:      "{source}_{record_id}"
+text:           raw narrative (e.g., "ASSAULT - AGGRAVATED, Tremont St, 11 PM")
+metadata: {
+    source:         "crime" | "311" | "reddit" | "news" | "citizen" | "meetup" | "eventbrite"
+    user_id:        "user_123"
+    listing_lat:    42.3412
+    listing_lon:    -71.0698
+    lat:            42.3398
+    lon:            -71.0685
+    timestamp:      "2026-04-01T23:00:00Z"
+    severity_llm:   "violent"          // crime only
+    sentiment_llm:  "negative"         // reddit/news only
+    preference_match: true             // lifestyle sources only
+    ingested_at:    "2026-04-02T06:00:00Z"
+}
+namespace:      "user_123"
 ```
 
 ### B. Sample Classification Prompt
@@ -429,6 +477,22 @@ text:            "Sunny 2BR in South End..."
 ```
 
 Tested April 5, 2026: 900 listings returned for Boston, 2,504 unique listings across Boston/Cambridge/Somerville/Brookline after deduplication.
+
+### D. HyDE Retrieval Example
+
+**User query:** "Is it safe to walk home late at night near the Allston listing?"
+
+**Step 1 — HyDE generates a hypothetical answer:**
+"Walking home late at night near Allston can be risky. There have been reports of assaults and robberies along Commonwealth Ave and Brighton Ave after midnight, particularly near bars and transit stops."
+
+**Step 2 — Hypothetical answer is embedded** using `text-embedding-3-small` → 1536-dimension vector
+
+**Step 3 — Pinecone retrieves nearest real narratives** (filtered by `listing_lat/lon` near Allston, `source` in [crime, citizen, reddit]):
+1. "ROBBERY - STREET, Brighton Ave, 1 AM" (crime, severity: violent)
+2. "Person assaulted near Allston T stop late night" (citizen, severity: high)
+3. "I live in Allston and honestly avoid walking down Harvard Ave past midnight" (reddit, sentiment: negative)
+
+**Step 4 — Chat Agent synthesizes response** grounded in the retrieved evidence, citing each source.
 
 ## Proof of Concept
 
