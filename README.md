@@ -2,6 +2,7 @@
 
 | Resource | Link |
 |----------|------|
+| Main proposal doc | [Google docs](https://docs.google.com/document/d/1NcZYqf6dVZ_72SN9RxmF2KxyVSYjWUgFyUrR59dswoY/edit?tab=t.0#heading=h.ae6jx6ed91is) |
 | Codelabs | [Codelabs Document](https://codelabs-preview.appspot.com/?file_id=https://docs.google.com/document/d/1C4EgqJ1iNbIH0LBLOLXK1bL2HbFNMgmnSNdpUlZiU9Q/edit?usp=sharing#0) |
 | Video Presentation | [Video Demo](https://drive.google.com/file/d/1HOFUP1D8YVLnYSf_EePcSo5Fb55kANPw/view?usp=sharing) |
 
