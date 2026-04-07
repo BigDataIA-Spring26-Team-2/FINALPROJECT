@@ -34,7 +34,12 @@ Build a platform that takes a user's work address, budget, routine, and lifestyl
 
 ### 1.3 The Watch Period
 
-The central idea behind Vicinity is that you should not sign a lease based on a single snapshot. The user bookmarks 3-5 candidate listings and sets a watch period — 1 week, 2 weeks, a month. During that window, Airflow DAGs run daily in the background: fetching new crime incidents along each listing's commute corridors, new 311 complaints near each listing, new Citizen App real-time events, Reddit and news mentions of each neighborhood, and Meetup/Eventbrite activity matching the user's lifestyle preferences. Every day, a scorecard row is written to Snowflake for each listing, and the raw narrative text (crime descriptions, Reddit posts, news headlines) is embedded into Pinecone for semantic retrieval. At the end of the watch period, the user asks for the comparison report. The Report Generator reads the full history of daily scorecards from Snowflake and retrieves cited evidence from Pinecone, compares all listings across every dimension with trends over time, and produces a justified recommendation. The user decides based on 14 days of accumulated evidence, not today's data.
+-Bookmark 3–5 listings and set a watch period (1 week, 2 weeks, or a month)
+-Airflow DAGs run daily pulling crime, 311 complaints, Citizen App events, Reddit/news mentions, and lifestyle-matched Meetup/-Eventbrite activity for each listing
+-Every day a scorecard row per listing is written to Snowflake; raw narratives get embedded into Pinecone for semantic retrieval
+-When the watch period ends, the Report Generator reads the full scorecard history from Snowflake and pulls cited evidence from Pinecone
+-It compares all listings across every dimension with trend lines and delivers a justified recommendation
+-You decide based on weeks of accumulated evidence, not a single snapshot
 
 Deliverables:
 - Multi-source data ingestion pipeline (10 sources, Airflow-orchestrated)
