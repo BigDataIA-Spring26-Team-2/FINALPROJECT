@@ -2,8 +2,8 @@
 
 | Resource | Link |
 |----------|------|
-| Codelabs | [Codelabs Document]() |
-| Video Presentation | [Video Demo]() |
+| Codelabs | [Codelabs Document](https://codelabs-preview.appspot.com/?file_id=https://docs.google.com/document/d/1C4EgqJ1iNbIH0LBLOLXK1bL2HbFNMgmnSNdpUlZiU9Q/edit?usp=sharing#0) |
+| Video Presentation | [Video Demo](https://drive.google.com/file/d/1HOFUP1D8YVLnYSf_EePcSo5Fb55kANPw/view?usp=sharing) |
 
 ## DAMG 7245 — Big Data and Intelligent Analytics
 
@@ -11,7 +11,6 @@
 
 | Member | Contribution |
 |--------|-------------|
-| Anirudh Raj | 33.3% |
 | Anirudh Raj | 33.3% |
 | Minal Naranje | 33.3% |
 | Janhavi Patil | 33.3% |
