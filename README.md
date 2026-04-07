@@ -147,17 +147,35 @@ Anyone searching for housing in Boston students, new hires, relocating professio
 
 The system uses four components built on LangGraph, with a single entry point. The Chat Agent uses dual retrieval — SQL templates against Snowflake for structured data (scorecard numbers, crime counts, trends) and HyDE-enhanced semantic search against Pinecone for narrative evidence (incident descriptions, Reddit discussions, news coverage). This means the system can answer both "how many violent crimes happened near listing A this week?" (SQL) and "what are people saying about safety in Allston at night?" (Pinecone).
 
-**Chat Agent (ReAct loop).** The only component the user interacts with. It receives every message, classifies intent, and routes accordingly. For structured queries ("how many crimes near this listing?", "what's the commute time?"), the Chat Agent selects a SQL template, queries Snowflake, and synthesizes a response. For open-ended queries ("what's the vibe of this neighborhood?", "is it sketchy walking home late near this place?", "show me things to do around my listings"), the Chat Agent generates a hypothetical answer (HyDE), embeds it, and retrieves semantically similar narratives from Pinecone — Reddit posts, news headlines, crime descriptions, event listings — then synthesizes a grounded response citing specific evidence. If the user wants to change something ("bookmark this listing"), it calls the Organizer. If the user wants to find apartments, it triggers the Search Supervisor. If the user wants the final comparison, it triggers the Report Generator. All responses flow back through the Chat Agent to the user.
+**Chat Agent (ReAct loop).** Only user-facing component; classifies intent and routes every message.
 
-**Organizer (write tools).** A set of functions with write access to Snowflake. Creates profiles, geocodes addresses via Google Maps, stores routine destinations, bookmarks candidate listings, and triggers Airflow DAGs. The Chat Agent invokes these the Organizer never talks to the user directly.
+Uses SQL templates against Snowflake for structured queries and HyDE-enhanced semantic search against Pinecone for open-ended queries.
 
-**Search Supervisor (LangGraph parallel graph).** Triggered once per listing search. Queries HomeHarvest for Realtor.com MLS listings matching the user's budget and bedroom requirements, filters by commute using Google Maps Distance Matrix, then fans out four scoring tasks in parallel across all surviving listings: safety (crime + Citizen along route corridors), livability (311 complaints near listing), amenities (Overpass within 800m), and lifestyle match (Meetup + Google Places + Overpass tags matched to user preferences). Fans in to a ranking step where the LLM explains why each listing scored the way it did.
+Routes to Organizer for writes, Search Supervisor for apartment searches, Report Generator for the final comparison.
 
-**Report Generator (LangGraph sequential graph).** Triggered when the user asks for the comparison report after the watch period. Three steps: (1) compile all daily scorecards from Snowflake into a comparison matrix across all bookmarked listings, (2) LLM analyzes tradeoffs — weighs safety vs lifestyle vs commute against the user's stated priorities, identifies where dimensions conflict, flags trends, (3) LLM generates the final recommendation citing specific evidence retrieved from Pinecone — actual Reddit posts about the neighborhood, specific crime incident descriptions along the route, relevant news coverage — not just aggregate numbers.
+**Organizer (write tools).** Write-access functions for Snowflake; never user-facing.
 
-**Airflow DAGs (background pipelines).** Not agents. Triggered by the Organizer when the user bookmarks listings, then run on schedule until the watch period ends. Five DAG types: ingest (fetches new data from all sources), classify (LLM tags each record with severity/sentiment/preference match via Pydantic-validated DeepSeek calls), embed (writes the raw narrative text with metadata to Pinecone — crime descriptions, Reddit posts, news headlines, 311 case titles, event details), scorecard (aggregates classified records into one row per listing per day in Snowflake), and listings (re-checks active listings for price changes and stale detection — HomeHarvest for MLS listings, Craigslist scrape for non-MLS fallback listings).
+Handles profile creation, geocoding, destination storage, bookmarking listings, and triggering Airflow DAGs.
 
-**MCP Server.** A FastAPI endpoint with SSE transport that exposes the Chat Agent as an invocable tool. Any MCP-compatible LLM client (Claude Desktop, a custom chatbot, or any application speaking the MCP protocol) connects with an API key, and the user's profile, bookmarked listings, and preferences are loaded from Snowflake automatically. The client sends a natural language query, the MCP server routes it to the Chat Agent, and the response streams back. Additionally, a small set of direct API tools are exposed for programmatic access: `search_listings`, `check_location`, `get_comparison_report`, and `add_destination` these bypass the Chat Agent and invoke the inner components (Search Supervisor, Report Generator, Organizer) directly when an LLM client already knows what it wants.
+**Search Supervisor (LangGraph parallel graph).** Queries HomeHarvest for MLS listings, filters by commute via Google Maps Distance Matrix.
+
+Fans out four parallel scoring tasks: safety, livability, amenities, lifestyle match.
+
+Fans in to a ranking step with LLM-generated explanations per listing.
+
+**Report Generator (LangGraph sequential graph).** Compiles daily scorecards from Snowflake into a comparison matrix.
+
+LLM weighs tradeoffs against user priorities, flags trends and conflicts.
+
+Generates a final recommendation citing specific Pinecone evidence — Reddit posts, crime descriptions, news coverage.
+
+**Airflow DAGs (background pipelines).** Triggered on bookmark, run on schedule until the watch period ends.
+
+Five types: ingest, classify, embed, scorecard, listings (price change and stale detection).
+
+**MCP Server.** FastAPI endpoint with SSE transport exposing the Chat Agent to any MCP-compatible client.
+
+Exposes direct API tools — `search_listings`, `check_location`, `get_comparison_report`, `add_destination` — bypassing the Chat Agent when needed.
 
 **System Architecture — Agent Interactions:**
 
