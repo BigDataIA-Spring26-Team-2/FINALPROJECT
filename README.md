@@ -34,12 +34,13 @@ Build a platform that takes a user's work address, budget, routine, and lifestyl
 
 ### 1.3 The Watch Period
 
--Bookmark 3–5 listings and set a watch period (1 week, 2 weeks, or a month)
--Airflow DAGs run daily pulling crime, 311 complaints, Citizen App events, Reddit/news mentions, and lifestyle-matched Meetup/-Eventbrite activity for each listing
--Every day a scorecard row per listing is written to Snowflake; raw narratives get embedded into Pinecone for semantic retrieval
--When the watch period ends, the Report Generator reads the full scorecard history from Snowflake and pulls cited evidence from Pinecone
--It compares all listings across every dimension with trend lines and delivers a justified recommendation
--You decide based on weeks of accumulated evidence, not a single snapshot
+- Bookmark 3–5 listings and set a watch period (1 week, 2 weeks, or a month)
+- Airflow DAGs run daily pulling crime, 311 complaints, Citizen App events, Reddit/news mentions, and lifestyle-matched Meetup/
+- Eventbrite activity for each listing
+- Every day a scorecard row per listing is written to Snowflake; raw narratives get embedded into Pinecone for semantic retrieval
+- When the watch period ends, the Report Generator reads the full scorecard history from Snowflake and pulls cited evidence from Pinecone
+- It compares all listings across every dimension with trend lines and delivers a justified recommendation
+- You decide based on weeks of accumulated evidence, not a single snapshot
 
 Deliverables:
 - Multi-source data ingestion pipeline (10 sources, Airflow-orchestrated)
